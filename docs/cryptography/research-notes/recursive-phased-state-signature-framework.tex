@@ -1,0 +1,352 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{xcolor}
+
+\title{Recursive Phased-State Signatures:\\Problem Analysis and Mathematical Framework}
+\author{Research note}
+\date{May 28, 2026}
+
+\newtheorem{definition}{Definition}
+\newtheorem{lemma}{Lemma}
+\newtheorem{theorem}{Theorem}
+\newtheorem{problem}{Problem}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note describes a research framework for a recursive phased-state
+post-quantum signature scheme. The proposal is not a production-ready
+cryptosystem. Its purpose is to turn a self-similar, fractal-inspired key
+generation idea into a finite mathematical object with explicit security
+games, implementation interfaces, and cryptanalytic questions. The conservative
+instantiation is hash-based and uses recursive state expansion, phase-separated
+commitments, one-time or few-time signature leaves, and optional batch
+verification. More experimental finite-geometric variants can replace the
+hash-only state expansion once the base framework is testable.
+\end{abstract}
+
+\section{Problem Analysis}
+
+Current post-quantum signature options create several tradeoffs. ML-DSA is
+practical but keeps the ecosystem heavily concentrated in structured lattices.
+SLH-DSA is conservative and hash-based, but signatures are comparatively large.
+Falcon/FN-DSA is compact, but implementation is more delicate. Additional NIST
+signature candidates diversify assumptions, but several are complex,
+assumption-heavy, or still exposed to active cryptanalysis.
+
+The gap considered here is a signature framework with:
+\begin{itemize}
+  \item compact seed-derived private keys;
+  \item explicitly separated signing phases;
+  \item recursive, self-similar finite state generation;
+  \item public commitments that bind all phases to one public key;
+  \item a path to batch or aggregate verification;
+  \item no dependence on floating point or real-valued chaotic maps.
+\end{itemize}
+
+\section{Solution Summary}
+
+Let a root seed generate a tree of secret states. A phase corresponds to a depth
+or labeled slice of that tree. Each state has a public projection. A public key
+commits to all phase roots. A signature proves that one phase-local secret state
+was authorized by the committed public key and signed a message.
+
+\[
+  s \longrightarrow S_\epsilon
+    \longrightarrow \{S_v : v \in \mathcal{T}_{D,b}\}
+    \longrightarrow \{P_v = \Pi_{\phi_{|v|}}(S_v)\}
+    \longrightarrow PK.
+\]
+
+The first instantiation, RPS-H, is intentionally conservative: use SHAKE256 as a
+domain-separated random oracle, a Merkle commitment per phase, and a one-time or
+few-time signature layer at leaves. The recursive structure is evaluated for
+compression, phase agility, and batch verification behavior before introducing
+new hardness assumptions.
+
+\section{Mathematical Framework}
+
+\subsection{Parameters and Domains}
+
+Let $\lambda \in \{128,192,256\}$ be the target security parameter. Let
+$D \geq 1$ be the recursion depth and $b \geq 2$ be the branching factor. Define
+the phase set
+\[
+  \Phi = \{\phi_0,\phi_1,\ldots,\phi_D\}.
+\]
+
+Let $\mathcal{T}_{D,b}$ be a rooted $b$-ary tree of depth $D$. A node is a path
+$v=(j_1,\ldots,j_i)$ with $j_k \in \{0,\ldots,b-1\}$ and $|v|=i$. The root is
+$\epsilon$.
+
+Let
+\[
+  H : \{0,1\}^* \rightarrow \{0,1\}^{2\lambda}
+\]
+be modeled as a domain-separated random oracle or instantiated by SHAKE256.
+
+\subsection{Recursive State Generation}
+
+The root secret is sampled uniformly:
+\[
+  s \xleftarrow{\$} \{0,1\}^{\lambda}.
+\]
+
+The initial state is:
+\[
+  S_\epsilon = H(\textsf{RPS-root} \parallel s).
+\]
+
+For a child $v \parallel j$ at depth $i+1$, define:
+\[
+  S_{v \parallel j}
+    = H(\textsf{RPS-child} \parallel S_v \parallel \phi_i \parallel j \parallel v).
+\]
+
+This rule is self-similar because the same expansion relation is used at every
+scale. The phase label and path are included to prevent accidental related-key
+reuse across phases and siblings.
+
+\subsection{Public Projection and Phase Commitments}
+
+For each node $v$ at phase $i=|v|$, define a public projection:
+\[
+  P_v = \Pi_{\phi_i}(S_v)
+      = H(\textsf{RPS-public} \parallel \phi_i \parallel v \parallel S_v).
+\]
+
+Let $L_i=\{P_v : |v|=i\}$ be the set of public projections in phase $i$. Define
+the phase commitment:
+\[
+  C_i = \mathsf{MerkleRoot}(L_i).
+\]
+
+The global public key is:
+\[
+  PK = H(\textsf{RPS-pk} \parallel C_0 \parallel C_1 \parallel \cdots \parallel C_D).
+\]
+
+The private key is either the seed $s$ or the seed plus cached internal states:
+\[
+  SK = s
+  \quad\text{or}\quad
+  SK = (s,\{S_v\}_{v \in \mathcal{C}}).
+\]
+
+\section{Algorithms}
+
+\begin{algorithm}
+\caption{$\mathsf{KeyGen}(1^\lambda,D,b)$}
+\begin{algorithmic}[1]
+\State $s \xleftarrow{\$} \{0,1\}^{\lambda}$
+\State $S_\epsilon \gets H(\textsf{RPS-root} \parallel s)$
+\For{$i=0$ to $D-1$}
+  \ForAll{$v$ such that $|v|=i$}
+    \For{$j=0$ to $b-1$}
+      \State $S_{v\parallel j} \gets H(\textsf{RPS-child}\parallel S_v\parallel\phi_i\parallel j\parallel v)$
+    \EndFor
+  \EndFor
+\EndFor
+\For{$i=0$ to $D$}
+  \State $L_i \gets \{H(\textsf{RPS-public}\parallel\phi_i\parallel v\parallel S_v): |v|=i\}$
+  \State $C_i \gets \mathsf{MerkleRoot}(L_i)$
+\EndFor
+\State $PK \gets H(\textsf{RPS-pk}\parallel C_0\parallel\cdots\parallel C_D)$
+\State \Return $(PK,SK=s)$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{$\mathsf{Sign}(SK,m,i)$}
+\begin{algorithmic}[1]
+\State Select an unused path $v$ with $|v|=i$
+\State Derive $S_v$ from $s$ along path $v$
+\State $x_v \gets H(\textsf{RPS-ots-secret}\parallel S_v\parallel H(m))$
+\State $\sigma_{\mathsf{ots}} \gets \mathsf{OTS.Sign}(x_v,m)$
+\State $P_v \gets H(\textsf{RPS-public}\parallel\phi_i\parallel v\parallel S_v)$
+\State $\pi_v \gets \mathsf{MerkleAuthPath}(P_v,C_i)$
+\State \Return $\sigma=(i,v,\sigma_{\mathsf{ots}},P_v,\pi_v)$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{$\mathsf{Verify}(PK,m,\sigma)$}
+\begin{algorithmic}[1]
+\State Parse $\sigma=(i,v,\sigma_{\mathsf{ots}},P_v,\pi_v)$
+\If{$|v|\neq i$} \State \Return $\mathsf{reject}$ \EndIf
+\If{$\mathsf{OTS.Verify}(P_v,m,\sigma_{\mathsf{ots}})=\mathsf{false}$}
+  \State \Return $\mathsf{reject}$
+\EndIf
+\If{$\mathsf{MerkleVerify}(P_v,\pi_v,C_i)=\mathsf{false}$}
+  \State \Return $\mathsf{reject}$
+\EndIf
+\If{$PK \neq H(\textsf{RPS-pk}\parallel C_0\parallel\cdots\parallel C_D)$}
+  \State \Return $\mathsf{reject}$
+\EndIf
+\State \Return $\mathsf{accept}$
+\end{algorithmic}
+\end{algorithm}
+
+\section{Security Definitions}
+
+\begin{definition}[Cross-Scale One-Wayness]
+Given public projections
+\[
+  \mathcal{P}=\{P_v : v \in Q \subseteq \mathcal{T}_{D,b}\},
+\]
+an adversary should not recover any corresponding secret state $S_u$ for
+$u\notin Q_{\mathsf{revealed}}$ with probability non-negligibly better than
+$2^{-\lambda}$, even when projections from parents, children, and siblings are
+available.
+\end{definition}
+
+\begin{definition}[Phase Binding]
+A signature created under phase $\phi_i$ must not verify under phase $\phi_j$
+for $i\neq j$. Equivalently, the verification relation must bind
+\[
+  (PK,m,\sigma,i,v)
+\]
+to exactly one phase label and path.
+\end{definition}
+
+\begin{definition}[RPS-EUF-CMA]
+The unforgeability game gives the adversary $PK$ and signing access for chosen
+messages and phases, subject to path-use rules. The adversary wins if it outputs
+$(m^\star,\sigma^\star)$ accepted by $\mathsf{Verify}$ such that the signed
+message/path pair was not previously returned by the signing oracle.
+\end{definition}
+
+\section{Proof Sketch for the Conservative Hash-Based Variant}
+
+\begin{lemma}[Merkle Membership Binding]
+If the Merkle tree hash is collision resistant, then an adversary cannot replace
+a committed projection $P_v$ with a distinct $P'_v$ under the same phase root
+$C_i$ except with negligible probability.
+\end{lemma}
+
+\begin{proof}
+Any successful replacement induces either an equal leaf hash for distinct leaves
+or a collision at some internal node along the authentication path. Both cases
+contradict collision resistance of the Merkle compression/hash function.
+\end{proof}
+
+\begin{lemma}[Phase Separation]
+If $H$ is domain separated and modeled as a random oracle, then values derived
+under distinct labels $\phi_i\neq\phi_j$ are independent oracle domains.
+\end{lemma}
+
+\begin{proof}
+All calls include explicit strings and phase labels. Therefore an oracle query
+for one phase does not answer a query in another phase unless the full input
+strings collide. With canonical encoding, this requires identical labels and
+paths.
+\end{proof}
+
+\begin{theorem}[RPS-H Unforgeability, Informal]
+Assume the one-time signature is EUF-CMA secure for unused leaves, the Merkle
+commitment is collision resistant, and $H$ behaves as a domain-separated random
+oracle. Then RPS-H is EUF-CMA secure up to the probability of OTS forgery,
+Merkle collision, or reuse of a previously exposed signing state.
+\end{theorem}
+
+\begin{proof}
+Let an adversary output a valid forgery. If its leaf projection is not committed
+under the claimed phase root, Merkle verification should fail, except by the
+membership-binding lemma. If the projection is committed but the leaf was not
+previously used, then the adversary has forged the OTS. If the forgery changes
+the phase, the phase-separation lemma prevents reinterpreting the same proof
+under another phase. If the adversary reuses an exposed leaf, the attack is
+outside the one-time use condition and must be prevented by state management or
+by replacing OTS with a stateless many-leaf construction.
+\end{proof}
+
+\section{Finite-Geometric Experimental Variant}
+
+After RPS-H is implemented, the recursive expansion can be generalized to a
+finite geometric state space. Let $S_v \in \mathbb{F}_q^n$. Define:
+\[
+  S_{v\parallel j}
+  = H_{\mathbb{F}_q^n}
+    \left(A_{\phi_i,j}S_v + B_{\phi_i,j}
+      + N_{\phi_i,j}(S_v) \bmod q\right),
+\]
+where $A_{\phi_i,j}\in\mathbb{F}_q^{n\times n}$, $B_{\phi_i,j}\in\mathbb{F}_q^n$,
+and $N_{\phi_i,j}$ is a low-degree nonlinear map.
+
+\begin{problem}[Hidden Recursive Embedding Problem]
+Given public projections $\{P_v\}$ of a recursively generated finite geometric
+object, recover a secret state $S_u$, a valid hidden path, or a trapdoor relation
+linking two phases.
+\end{problem}
+
+This variant is only credible if it survives attacks based on linearization,
+Gröbner bases, cycle finding, meet-in-the-middle search, related-key analysis,
+and quantum amplitude amplification.
+
+\section{Implementation Framework}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Component & Conservative choice & Experimental replacement \\
+\midrule
+Expansion & SHAKE256 XOF & finite-field recursive map \\
+Projection & hash of state & lattice/code/geometric projection \\
+Commitment & Merkle tree & vector commitment or accumulator \\
+Leaf signing & WOTS+/FORS-like OTS & proof of hidden relation \\
+State mode & stateful counters & stateless hypertree sampling \\
+Batching & shared Merkle/OTS checks & aggregate verification relation \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The minimum implementation API is:
+\[
+\begin{aligned}
+  &(PK,SK) \leftarrow \mathsf{RPS.KeyGen}(\lambda,D,b),\\
+  &\sigma \leftarrow \mathsf{RPS.Sign}(SK,m,i),\\
+  &\{0,1\} \leftarrow \mathsf{RPS.Verify}(PK,m,\sigma),\\
+  &\{0,1\} \leftarrow \mathsf{RPS.BatchVerify}(PK,\{m_k,\sigma_k\}_k).
+\end{aligned}
+\]
+
+\section{Evaluation Plan}
+
+The first prototype should measure:
+\begin{itemize}
+  \item public key size as a function of $D$ and $b$;
+  \item private key size with seed-only and cached modes;
+  \item signature size by phase;
+  \item signing and verification time;
+  \item batch verification savings;
+  \item failure behavior under phase misuse and leaf reuse;
+  \item cross-phase statistical and structural leakage.
+\end{itemize}
+
+\section{Conclusion}
+
+Recursive phased-state signatures are best treated as a framework first and a
+new hardness assumption second. The conservative hash-based version makes the
+architecture concrete while relying on familiar assumptions. The more ambitious
+finite-geometric version should be introduced only after the recursive framework
+has clear security games, benchmarks, and known attack targets.
+
+\section*{References}
+
+\begin{itemize}
+  \item NIST, Post-Quantum Cryptography Standardization Project:
+  \url{https://csrc.nist.gov/Projects/Post-Quantum-Cryptography}
+  \item NIST, Round 3 Additional Digital Signature Schemes:
+  \url{https://csrc.nist.gov/projects/pqc-dig-sig/round-3-additional-signatures}
+  \item NIST IR 8610, Status Report on the Second Round of the Additional
+  Digital Signature Schemes for the NIST Post-Quantum Cryptography
+  Standardization Process, 2026.
+\end{itemize}
+
+\end{document}
